@@ -13,9 +13,13 @@ class NeuralNetwork(nn.Module):
         self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
             nn.Linear(28*28, 512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
+            nn.Dropout(0.3),
             nn.Linear(512, 512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
+            nn.Dropout(0.3),
             nn.Linear(512, 10),
         )
 
@@ -35,9 +39,12 @@ def train(dataloader, model, loss_fn, optimizer):
         loss = loss_fn(pred, y)
 
         # Backpropagation
+        # loss.backward()
+        # optimizer.step()
+        # optimizer.zero_grad()
+        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        optimizer.zero_grad()
 
         if batch % 10 == 0:
             loss, current = loss.item(), (batch + 1) * len(X)
@@ -108,6 +115,8 @@ class CustomDataset(Dataset):
                 if i < 28 and j < 28:
                     if char == '#' or char == '+':
                         img_array[i, j] = 1
+                    elif char == '+':
+                        img_array[i, j] = 1
                     elif char == ' ':
                         img_array[i, j] = 0
         return img_array
@@ -130,8 +139,10 @@ test_dataloader = DataLoader(test_data, batch_size = 64, shuffle = True)
 device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
 
 model = NeuralNetwork().to(device)
+
 loss_fn = nn.CrossEntropyLoss()
-optimizer = torch.optim.SGD(model.parameters(), lr = 0.001)
+optimizer = torch.optim.Adam(model.parameters(), lr = 0.001)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 3, gamma = 0.1)
 
 epochs = 5
 for t in range(epochs):
