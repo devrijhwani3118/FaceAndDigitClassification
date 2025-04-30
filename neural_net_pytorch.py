@@ -14,13 +14,15 @@ class NeuralNetwork(nn.Module):
         self.linear_relu_stack = nn.Sequential(
             nn.Linear(28*28, 512),
             nn.BatchNorm1d(512),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(512, 512),
-            nn.BatchNorm1d(512),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(512, 10),
+            nn.GELU(),
+            nn.Dropout(0.5),
+
+            nn.Linear(512, 256),
+            nn.BatchNorm1d(256),
+            nn.GELU(),
+            nn.Dropout(0.5),
+
+            nn.Linear(256, 10),
         )
 
     def forward(self, x):
@@ -28,27 +30,27 @@ class NeuralNetwork(nn.Module):
         logits = self.linear_relu_stack(x)
         return logits
     
-def train(dataloader, model, loss_fn, optimizer):
-    size = len(dataloader.dataset)
+def train(dataloader, model, loss_fn, optimizer, device, scheduler = None):
+    # size = len(dataloader.dataset)
     model.train()
-    for batch, (X, y) in enumerate(dataloader):
+    total_loss, correct = 0, 0
+
+    for X, y in dataloader:
         X, y = X.to(device), y.to(device)
 
-        # Compute prediction error
         pred = model(X)
         loss = loss_fn(pred, y)
 
-        # Backpropagation
-        # loss.backward()
-        # optimizer.step()
-        # optimizer.zero_grad()
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        if batch % 10 == 0:
-            loss, current = loss.item(), (batch + 1) * len(X)
-            print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+        total_loss += loss.item() * X.size(0)
+        correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+
+        if scheduler:
+            scheduler.step()
+    
 
 def test(dataloader, model, loss_fn):
     size = len(dataloader.dataset)
@@ -63,7 +65,7 @@ def test(dataloader, model, loss_fn):
             correct += (pred.argmax(1) == y).type(torch.float).sum().item()
     test_loss /= num_batches
     correct /= size
-    print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
+    print(f"Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
 
 class CustomDataset(Dataset):
     def __init__(self, img_file, label_file, transform = None):
@@ -72,7 +74,12 @@ class CustomDataset(Dataset):
         
         self.images = []
         current_image = []
-        separator = ' ' * 28
+        separator = ''
+        if (img_file == "data/digitdata/trainingimages" or img_file == "data/digitdata/testimages"):
+            separator = ' ' * 28
+        else:
+            separator = ' ' * 60
+
 
         for line in lines:
             line = line.rstrip('\n')
@@ -121,7 +128,11 @@ class CustomDataset(Dataset):
                         img_array[0, i, j] = 0
         return img_array
 
-transform = torch.from_numpy
+# transform = torch.from_numpy
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,), (0.5,))  # Normalize to [-1, 1]
+])
 train_data = CustomDataset(
     img_file = "data/digitdata/trainingimages",
     label_file = "data/digitdata/traininglabels",
@@ -130,6 +141,16 @@ train_data = CustomDataset(
 test_data = CustomDataset(
     img_file = "data/digitdata/testimages",
     label_file = "data/digitdata/testlabels",
+    transform = transform
+)
+ftrain_data = CustomDataset(
+    img_file = "data/facedata/facedatatrain",
+    label_file = "data/facedata/facedatatrainlabels",
+    transform = transform
+)
+ftest_data = CustomDataset(
+    img_file = "data/facedata/facedatatest",
+    label_file = "data/facedata/facedatatestlabels",
     transform = transform
 )
 
@@ -160,23 +181,49 @@ for run in range(1, 11):
 
     train_dataloader = DataLoader(
         train_subset,
-        batch_size = 64,
+        batch_size = (int(25 * run)),
         shuffle = True,
         generator = torch.Generator().manual_seed(42)
     )
 
     model = NeuralNetwork().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr = 0.001)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.005)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 3, gamma = 0.1)
     loss_fn = nn.CrossEntropyLoss()
 
-    print(f"\nRun {run}/10 - Using {data_percent:.0%} of training data ({subset_size} samples)")
+    print(f"\nRun Digit {run}/10 - Using {data_percent:.0%} of training data ({subset_size} samples)")
     print("----------------------------------------")
     
-    train(train_dataloader, model, loss_fn, optimizer)
-    scheduler.step()
+    train(train_dataloader, model, loss_fn, optimizer, device)
         
         # Test on full test set
     test(test_dataloader, model, loss_fn)
 
+# for run in range(1, 11):
+#     data_percent = run / 10
+
+#     subset_size = int(len(ftrain_data) * data_percent)
+#     indices = torch.randperm(len(ftrain_data))[:subset_size]
+#     train_subset = torch.utils.data.Subset(ftrain_data, indices)
+
+#     train_dataloader = DataLoader(
+#         train_subset,
+#         batch_size = (int(25 * run)),
+#         shuffle = True,
+#         generator = torch.Generator().manual_seed(42)
+#     )
+
+#     model = NeuralNetwork().to(device)
+#     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.01)
+#     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 3, gamma = 0.1)
+#     loss_fn = nn.CrossEntropyLoss()
+
+#     print(f"\nRun Face {run}/10 - Using {data_percent:.0%} of training data ({subset_size} samples)")
+#     print("----------------------------------------")
+    
+#     train(train_dataloader, model, loss_fn, optimizer, device, scheduler)
+#     scheduler.step()
+        
+#         # Test on full test set
+#     test(test_dataloader, model, loss_fn)
 print("Done!")
